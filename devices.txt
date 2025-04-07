@@ -1,1 +1,16 @@
+ ; devices.txt file. Set ADDRESS = address of Pi
+ ; semicolon is comment char
+
+DEVICE = pi4  TYPE=Mesh  NODE=1   ADDRESS = D8:3A:DD:0C:A2:CA
+
+DEVICE = Sensor de humedad 0 TYPE=LE NODE=2 ADDRESS = 8C:4F:00:35:D6:0E
+  PRIMARY_SERVICE = 1800                                ; 1800=Generic access
+    LECHAR = Device Name  PERMIT=02 SIZE=16 UUID=2A00   ; 2A00=Device name (index 0)
+    LECHAR = Appearance   PERMIT=02 SIZE=2  UUID=2A01   ; 2A01=Appearance (index 1)
+  PRIMARY_SERVICE = 1801                                ; 1801=Generic attributes
+    LECHAR = Service changed PERMIT=20 SIZE=4 UUID=2A05 ; 2A05=Service changed  (index 2)
+  PRIMARY_SERVICE = 5404                                ; private service, you choose UUID
+    LECHAR = Humidity  PERMIT=16 SIZE=16 UUID=2A6F      ; private characteristic, choose UUID (index 3)
+
+
 
