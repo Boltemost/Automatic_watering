@@ -1,8 +1,7 @@
 import RPi.GPIO as gpio
 import btfpy as btf
-import Adafruit_DHT as dht
-import Adafruit_DHT.Raspberry_Pi
 import time
+import requests as rqt
 
 
 #Declación de variables
@@ -10,23 +9,28 @@ import time
 System=True
 valveNum=4
 
-soilM = [] #Designación de los sensores de humedad
-for i in range(valveNum):
-    soilM.append({"lenode": 2+i, "dato": 0.5, "last_read": 0})
-
-temp= [0, 0] #Data del sensor: temp=Temperatura, humid=Humedad
-humid= [0, 0]
-
-valve = {} #Designación de las válvulas
-for i in range(valveNum):
-    valve[i]=False
-
 manualOperation=True
 manualWatering=False
 waterSensorHigh, waterSensorLow=True, True
 etapa = 0 #etapa va de 0 - 5
 
+soilM = [] #Designación de los sensores de humedad
+for i in range(valveNum):
+    soilM.append({"lenode": 2+i, "data": 0.5, "last_read": 0, "state": False})
+SoilMObj = []
+
+valve = [] #Designación de las válvulas
+for i in range(valveNum):
+    valve.append({"timer": 0, "opening_time": 0, "state": False})
+ValveObj = []
+
+temp= [0, 0] #Data del sensor: temp=Temperatura, humid=Humedad
+humid= [0, 0]
+
 index = -1
+
+tries = 0
+
 
 
 
@@ -34,26 +38,37 @@ index = -1
 #https://github.com/petzval/btferret?tab=readme-ov-file#4-2-33-notify_ctic
 def notify_callback(lenode,cticn,data,datlen):
   if index != -1 and cticn == index:     
-      dataFloat = float(int.from_bytes(data, "little"))/1000 #Caracteristica humedad
-      soilM[lenode-2]["dato"]=dataFloat
-      print("Num sensor: ", btf.Device_name(lenode), "porcentaje de humedad: ", dataFloat, "tipo: ", type(dataFloat))
+        dataFloat = float(int.from_bytes(data, "little"))/1000 #Caracteristica humedad
+        soilM[lenode-2]["data"] = dataFloat
+        soilM[lenode-2]["last_read"] = time.time()
+        #print("Num sensor: ", btf.Device_name(lenode), "porcentaje de humedad: ", dataFloat, "tipo: ", type(dataFloat))
   return(0)
 
 
-#Función para comprobar humedad sensores
+#Función comprobación última hora de lectura de humedad
+def timeChecksoilM (node):
+    if soilM[node]["state"] == True: #Comprueba si el sensor se encuentra conectado
+        maxTime = soilM[node]["last_read"] + 10
+        if (maxTime <= time.time()):
+            soilM_put(node, 3)
+            print("Error (Código 3): Sensor", node, "desconectado o transmisión de datos interrumpida")
+            soilM[node]["state"] = False
 
-def checkSoilMLow (threshold, i):
-    #print("checkSoilMLow", soilM[i]["dato"], "i: ", i)
-    if soilM[i]["dato"] <= threshold:
-        return (i)
-    return (-1)
 
-def checkSoilMHigh (threshold, i):
-    #print("checkSoilMHigh",soilM[i]["dato"], "i: ", i)
-    if soilM[i]["dato"] >= threshold:
-        return (i)
-    return (-1)
-
+#Función solicitar un request al servidor
+def make_request(path, method, json=None):
+    try:
+        return rqt.request(method, url=f"http://localhost:8000/{path}",json=json)
+    except:
+        return None
+    
+def soilM_put(i, error_code = -1): #Datos del Soil Moiture Sensor
+    SoilMObj = {"id": i+1, "data": soilM[i]["data"], "error_code": error_code}
+    rsp = make_request(f'soil_moisture_data/{i+1}', "PUT", json=SoilMObj)
+    if rsp == None:
+        return
+    print("Status Code: ", rsp.status_code)
+    print("Response Body:", rsp.content.decode())
 
 
 #Designación pines
@@ -70,18 +85,46 @@ for i in [31, 33, 35, 37]:
     gpio.setup(i, gpio.OUT) # Valvulas
 
 #Iniciar comunicación bluetooth
-#https://github.com/petzval/btferret?tab=readme-ov-file#4-1-1-list-with-descriptions
+#https://github.com/petzval/btferret?tab=readme-ov-file#4-1-1-list-with-descriptions  #sintaxis de devices.txt
 if(btf.Init_blue("devices.txt") == 0): #Carga direcciones de Bluetooth
-  exit(0)
+    exit(0)
 for node in range(2,valveNum+2): #Enlace con cada nodo (valor inicia en 2) ##########
-  if btf.Connect_node(node,btf.CHANNEL_LE,0) == 0: #Check para comprobar si los nodos se encuentran conectados
-      print("Nodo ", node, " no identificado")
-  else:
-    while btf.Find_ctics(node)<=0:# Si el nodo se encuentra disponible, lo inicia
-        btf.Connect_node(node,btf.CHANNEL_LE,0)
-    index = btf.Find_ctic_index(node, btf.UUID_2, btf.Strtohex("2A6F"))
-    btf.Notify_ctic(node,index,btf.NOTIFY_ENABLE,notify_callback)
+    if btf.Connect_node(node,btf.CHANNEL_LE,0) == 0: #Check para comprobar si los nodos se encuentran conectados
+        soilM_put((node-2), 1)
+        print("Error (Código 1): Nodo ", node, " no identificado")
+    else:
+        while btf.Find_ctics(node)<=0 and tries <= 100:# Si el nodo se encuentra disponible, lo inicia
+            btf.Connect_node(node,btf.CHANNEL_LE,0)
+            tries = tries + 1
+            
+        if tries <= 99: #El sistema solo va a intentar conectar hasta 100 veces
+            tries = 0
+            index = btf.Find_ctic_index(node, btf.UUID_2, btf.Strtohex("2A6F"))
+            btf.Notify_ctic(node,index,btf.NOTIFY_ENABLE,notify_callback)
+            soilM[node-2]["state"] = True
+        else: #Si falla la conexión entrega error
+            soilM_put(node, 2)
+            print("Error (Código 2): No se estableció conexión con el nodo ", node)
 
+
+#                                  _,-/"---,
+#           ;"""""""""";         _/;; ""  <@`---v
+#         ; :::::  ::  "\      _/ ;;  "    _.../
+#        ;"     ;;  ;;;  \___/::    ;;,'""""
+#       ;"          ;;;;.  ;;  ;;;  ::/
+#      ,/ / ;;  ;;;______;;;  ;;; ::,/
+#      /;;V_;;   ;;;       \       /
+#      | :/ / ,/            \_ "")/
+#      | | / /"""=            \;;\""=
+#      ; ;{::""""""=            \"""=
+#   ;"""";
+#   \/"""
+#      __                   _   
+#     / _|                 | |  
+#    | |_ ___ _ __ _ __ ___| |_ 
+#    |  _/ _ \ '__| '__/ _ \ __|
+#    | ||  __/ |  | | |  __/ |_ 
+#    |_| \___|_|  |_|  \___|\__|
 
 
 #loop
@@ -89,15 +132,8 @@ while System:
     # start_time = time.time()
 
 
-    #Lectura y escritura de pines
-    #DHT data
-    humid[1], temp[1] = dht.read(dht.DHT11, 18, platform=Adafruit_DHT.Raspberry_Pi) #temperatura y humedad son ambos Float
-    if humid[1] != None or temp[1] != None:
-        humid[0] = humid[1]
-        temp[0] = temp[1]
-    #print("Humedad: ", humid[0])
-    #print("Temperatura: ", temp[0])
 
+    #Lectura y escritura de pines
     #Read
     waterSensorHigh = gpio.input(12)
     waterSensorLow = gpio.input(16)
@@ -112,13 +148,18 @@ while System:
 
     #Write
     for i,j in enumerate([31, 33, 35, 37]):
-        value = not valve[i]
+        value = not valve[i]["state"]
         gpio.output(j,value)
 
 
     #Lectura de puertos Bluetooth
     
     btf.Read_notify(5)
+
+    #Check de tiempo de escritura de sensores
+
+    for i in range (valveNum):
+        timeChecksoilM(i)
 
     #Función operativa
 
@@ -127,7 +168,7 @@ while System:
         print ("etapa 0")
 
         for i in range(valveNum):
-            valve[i]=False
+            valve[i]["state"] = False
     
 
     if etapa == 0 and manualWatering: #Etapa 1
@@ -135,7 +176,8 @@ while System:
         print ("etapa 1")
         
         for i in range(valveNum):
-            valve[i]=True
+            valve[i]["state"] = True
+            valve[i]["opening_time"] = time.time()
 
 
     if (etapa == 0 or etapa == 1) and not manualOperation: #Etapa 2
@@ -143,17 +185,18 @@ while System:
         print ("etapa 2")
 
         for i in range(valveNum):
-            valve[i]=False
+            valve[i]["state"] = False
         
 
     #chequeo de humedad para cierre o apertura de válvulas
     for i in range (valveNum):
-        if etapa == 2 and (checkSoilMLow(0.2, i) != -1):
-            valve[checkSoilMLow(0.2, i)]=True
+        if (etapa == 2 and soilM[i]["data"] <= 0.2):
+            valve[i]["state"]=True
+            valve[i]["opening_time"] = time.time()
 
     for i in range (valveNum):
-        if etapa == 2 and (checkSoilMHigh(0.8, i) != -1):
-            valve[checkSoilMHigh(0.8, i)]=False
+        if (etapa == 2 and soilM[i]["data"] >= 0.8) or soilM[i]["state"] == False:
+            valve[i]["state"]=False
 
 
 
@@ -165,4 +208,4 @@ while System:
     #time.sleep(10)
     
 
-
+# https://www.youtube.com/watch?v=OWodAv1KHaM (información importante)
