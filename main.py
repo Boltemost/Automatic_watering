@@ -7,10 +7,11 @@ from pydantic import BaseModel
 #inicia FastAPI
 server = FastAPI()
 
+
+
 #Declaración de variables
 valveNum = 4
 soilMdata = []
-
 
 #Diccionario para DHT11
 dht11data = [
@@ -24,16 +25,45 @@ dht11data = [
     }
 ]
 
-
 #Diccionario para app (soil moissture sensor)
 for i in range(valveNum):
     soilMdata.append({"id": i+1, "data": 0.5, "error_code": -1})
 
+#Diccionario para app (control)
+controldata = [
+    {
+        "id" : 1,
+        "manualOperation" : True
+    },
+    {
+        "id" : 2,
+        "manualWatering" : False
+    },
+    {
+        "id" : 3,
+        "etapa" : 0
+    },
+    {
+        "id" : 4,
+        "try_connect_sensor" : -1
+    }
 
-#Request solicitados
+]
+
+
+#función para checker si id existe en diccionario
+def checkIdExists(array, id):
+    for obj in array:
+        if obj["id"] == id:
+            return True
+    return False
+
+
+
+#Request solicitados    #Path0
 @server.get('/', status_code=418) #check si el servidor esta funcionando
-def teapot():
-    return "I'm a teapot"
+def watering_can():
+    return "I'm a watering can"
 
 
 #Request del DHT11  #Path1
@@ -46,7 +76,7 @@ async def temp_humid_get(id : int):
     for i in dht11data:
         if i['id'] == id:
             return i
-    return Response(status_code=404)
+    raise HTTPException(status_code=404, detail="Item not found")
 
 @server.put("/climatic_variables/{id}", tags = ["Variables climáticas"])
 async def temp_humid_put(
@@ -103,12 +133,56 @@ async def soil_moisture_put(
 
 
 #Request de app (Valves)    #Path3
-@server.get("/Valves_state", tags = ["Estado de válvulas"])
+@server.get("/valves_state", tags = ["Estado de válvulas"])
 def valves():
     return 
 
-def checkIdExists(array, id):
-    for obj in array:
-        if obj["id"] == id:
-            return True
-    return False
+
+
+#Request de app (control)   #Path4
+@server.get("/control", tags = ["Sistema de control"])
+def control():
+    return controldata
+
+@server.get("/control/{id}", tags = ["Sistema de control"])
+async def control_get(id : int):
+    for i in controldata:
+        if i['id'] == id:
+            return i
+    raise HTTPException(status_code=404, detail="Item not found")
+
+@server.put("/control/{id}", tags = ["Sistema de control"])
+async def control_put(
+    id: int,
+    manualOperation: bool | None = Body(default=None),
+    manualWatering: bool | None = Body(default=None),
+    try_connect_sensor: int | None = Body(default=None)
+):
+
+    match id:
+        case 1:
+            if manualOperation == None:
+                return Response(status_code=204)
+            controldata[0]["manualOperation"] = manualOperation
+            return controldata[0]
+        
+        case 2:
+            if manualWatering == None:
+                return Response(status_code=204)
+            controldata[1]["manualWatering"] = manualWatering
+            return controldata[1]
+
+        case 3:
+            raise HTTPException(status_code=400, detail="Bad request")
+    
+        case 4:
+            if try_connect_sensor == None:
+                return Response(status_code=204)
+            controldata[3]["try_connect_sensor"] = try_connect_sensor
+            return controldata[3]  
+
+        case _:
+            if not checkIdExists(controldata, id):
+                raise HTTPException(status_code=404, detail="Item not found")
+            return []
+
