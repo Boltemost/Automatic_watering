@@ -35,14 +35,14 @@ def temp_humid_put():
 
 #Inicio puerto 
 gpio.setmode(gpio.BOARD)
-gpio.setup(22, gpio.IN, pull_up_down=gpio.PUD_UP) #(Bool) Botón emergencia
+gpio.setup(12, gpio.IN, pull_up_down=gpio.PUD_UP) #(Bool) Botón emergencia
 
 
 #Función asincrónica lectura sensor DHT11
 def readDHT11 ():
     while system[0]:
         time.sleep(5)
-        humid[1], temp[1] = dht.read(dht.DHT11, 18, platform=Adafruit_DHT.Raspberry_Pi) #temperatura y humedad son ambos Float
+        humid[1], temp[1] = dht.read(dht.DHT11, 23, platform=Adafruit_DHT.Raspberry_Pi) #temperatura y humedad son ambos Float
 
 #Función asincrónica escritura y .put request del sensor DHT11
 def writeDHT11 ():
@@ -70,7 +70,7 @@ def writeDHT11 ():
 #Función asincrónica paro de emergencia
 def stopButton ():
     while system[0]:
-        if not gpio.input(22):
+        if not gpio.input(12):
             print("stop")
             system[0] = False
             break 
