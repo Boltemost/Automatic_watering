@@ -9,19 +9,19 @@ import json
 System=True
 valveNum=4
 
-manualOperation=True
+manualOperation=False
 manualWatering=False
 waterSensorHigh, waterSensorLow=True, True
 etapa = 0 #etapa va de 0 - 2
 
 soilM = [] #Designación de los sensores de humedad
 for i in range(valveNum):
-    soilM.append({"lenode": 2+i, "data": 0.5, "last_read": 0, "state": False})
+    soilM.append({"lenode": 2+i, "data": 0.5, "last_read": 0, "state": False}) #(State determina si el sensor se encuentra activo o inactivo)
 soilMObj = []
 
 valve = [] #Designación de las válvulas
 for i in range(valveNum):
-    valve.append({"timer": 0, "opening_time": 0, "state": False})
+    valve.append({"timer": 0, "opening_time": 0, "state": False}) #(State determina si la valvula se encuentra abierta o cerrada)
 valveObj = []
 
 controlObj = []
@@ -51,20 +51,29 @@ def notify_callback(lenode,cticn,data,datlen):
 #Función comprobación última hora de lectura de humedad
 def timeChecksoilM (node):
     if soilM[node]["state"] == True: #Comprueba si el sensor se encuentra conectado
-        maxTime = soilM[node]["last_read"] + 15 #tiempo maximo de desconexión de 15 segundos
-        if (maxTime <= time.time()):
+        maxTime = soilM[node]["last_read"] + 30 #tiempo maximo de desconexión de 15 segundos
+        if (maxTime < time.time()):
             soilM_put(node, 3)
             print("Error (Código 3): Sensor", node, "desconectado o transmisión de datos interrumpida")
             soilM[node]["state"] = False
+        return
 
 
-#Función solicitar un request al servidor
+#Función comprobación ultima hora de escritura de válvula y del timer
+def timeCheckValve(node):
+    if valve[node]["opening_time"] >= time.time():
+        return
+    return
+
+
+#Funciones solicitar un request al servidor
 def make_request(path, method, json=None): #Chechea si errores y el estado del servidor, si request falla devuelve None
     try:
         return rqt.request(method, url=f"http://localhost:8000/{path}",json=json)
     except:
         return None
     
+
 def soilM_put(i, error_code = -1): #Entrega datos del Soil Moiture Sensor cuando solicita un put request
     soilMObj = {"id": i+1, "data": soilM[i]["data"], "error_code": error_code}
     rsp = make_request(f'soil_moisture_data/{i+1}', "PUT", json=soilMObj)
@@ -72,6 +81,39 @@ def soilM_put(i, error_code = -1): #Entrega datos del Soil Moiture Sensor cuando
         return
     #print("Status Code: ", rsp.status_code)
     #print("Response Body:", rsp.content.decode())
+
+
+def valves_get (id, request):
+    valveObj = {"id": id}
+    rsp = make_request(f'valves_state/{id}', "GET", json=valveObj)
+
+    if rsp != None: 
+        try:
+            # Parece que el server le devuelve JSON entonces acomodelo así parseandolo a lo chancho chingo
+            par = rsp.json()
+        except ValueError:
+            # Si le tira un string ahí raro
+            par = json.loads(rsp.text)
+    
+    match request:
+        case "timer":
+            if rsp == None:
+                return -1
+            return par["timer"]
+        case "state":
+            if rsp == None:
+                return valve[i]["state"]
+            return par["state"]
+
+
+def valves_put (i):
+    valveObj = {"id": i+1, "timer": valve[i]["timer"], "state": valve[i]["state"]}
+    rsp = make_request(f'valves_state/{i+1}', "PUT", json=valveObj)
+    if rsp == None:
+        return
+    #print("Status Code: ", rsp.status_code)
+    #print("Response Body:", rsp.content.decode())
+    
 
 def control_get(id): #recive datos de control cuando solicita un get request
     controlObj = {"id": id}
@@ -88,11 +130,11 @@ def control_get(id): #recive datos de control cuando solicita un get request
     match id:
         case 1:
             if rsp == None:
-                return False
+                return False #Respuesta por defecto para "manualOperation" en caso de perder coneccion con el servidor
             return par["manualOperation"]
         case 2:
             if rsp == None:
-                return False
+                return False #Respuesta por defecto para "manualWatering" en caso de perder coneccion con el servidor
             return par["manualWatering"]
         case 4:
             if rsp == None:
@@ -104,7 +146,10 @@ def control_get(id): #recive datos de control cuando solicita un get request
 
 
 def control_put(id, dato): #Entrega datos de control cuando solicita un put request
-    controlObj = {"id": id, "manualWatering": dato}
+    if id == 2:
+        controlObj = {"id": id, "manualWatering": dato}
+    if id == 3:
+        controlObj = {"id": id, "etapa": dato}
     rsp = make_request(f'control/{id}', "PUT", json=controlObj)
     if rsp == None:
         return
@@ -114,12 +159,8 @@ def control_put(id, dato): #Entrega datos de control cuando solicita un put requ
 #Designación pines
 
 gpio.setmode(gpio.BOARD)
-gpio.setup(12, gpio.IN) #(Bool) Sensor agua HIGH
-gpio.setup(16, gpio.IN) #(Bool) Sensor agua LOW
 
-gpio.setup(22, gpio.IN, pull_up_down=gpio.PUD_UP) #(Bool) Botón emergancia
-gpio.setup(38, gpio.IN, pull_up_down=gpio.PUD_UP) #(TEMPORAL Bool) Manual operation
-gpio.setup(40, gpio.IN, pull_up_down=gpio.PUD_UP) #(TEMPORAL Bool) Manual watering
+gpio.setup(22, gpio.IN, pull_up_down=gpio.PUD_UP) #(Bool) Botón emergencia
 
 for i in [31, 33, 35, 37]:
     gpio.setup(i, gpio.OUT) # Valvulas
@@ -171,15 +212,12 @@ print ("etapa 0")
 
 #loop
 while System:
-    # start_time = time.time()
+    start_time = time.time()
 
 
 
     #Lectura y escritura de pines de Raspberry pi
     #Read
-    waterSensorHigh = gpio.input(12)
-    waterSensorLow = gpio.input(16)
-
     if not gpio.input(22):
         print("stop")
         break 
@@ -219,27 +257,45 @@ while System:
 
     if manualOperation and not manualWatering and (etapa == 1 or etapa == 2): #Etapa 0
         etapa = 0
+        control_put(3, 0)
         print ("etapa 0")
 
         for i in range(valveNum):
             valve[i]["state"] = False
+            valves_put (i)
     
+
+    if etapa == 0:
+        for i in range(valveNum):
+            timer = valves_get (i+1, "timer")
+            if timer <= 0:
+                valve[i]["state"] = valves_get (i+1, "state")
+            else:
+                if (valve[i]["state"] == True) and (timer < time.time()):
+                    valve[i]["state"] = False
+                    valve[i]["timer"] = -1
+                    valves_put (i)
+          
 
     if etapa == 0 and manualWatering: #Etapa 1
         etapa = 1
+        control_put(3, 1)
         print ("etapa 1")
         
         for i in range(valveNum):
             valve[i]["state"] = True
             valve[i]["opening_time"] = time.time()
+            valves_put (i)
 
 
     if (etapa == 0 or etapa == 1) and not manualOperation: #Etapa 2
-        etapa = 2 
+        etapa = 2
+        control_put(3, 2)
         print ("etapa 2")
 
         for i in range(valveNum):
             valve[i]["state"] = False
+            valves_put (i)
         
         control_put(2,False)
         
@@ -247,21 +303,25 @@ while System:
 
     #chequeo de humedad para cierre o apertura de válvulas
     for i in range (valveNum):
-        if (etapa == 2 and soilM[i]["data"] <= 0.2):
-            valve[i]["state"]=True
-            valve[i]["opening_time"] = time.time()
+        if not valve[i]["state"]:
+            if (etapa == 2 and soilM[i]["data"] <= 0.2):
+                valve[i]["state"]=True
+                valve[i]["opening_time"] = time.time()
+                valves_put (i)
 
     for i in range (valveNum):
-        if (etapa == 2 and soilM[i]["data"] >= 0.8) or (etapa == 2 and soilM[i]["state"] == False):
-            valve[i]["state"]=False
+        if valve[i]["state"]:
+            if (etapa == 2 and soilM[i]["data"] >= 0.8) or (etapa == 2 and soilM[i]["state"] == False):
+                valve[i]["state"]=False
+                valves_put (i)
 
 
 
 
 
-    # end_time = time.time()
-    # elapsed_time = end_time - start_time
-    # print(f"Elapsed Time: {elapsed_time} seconds")
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"Elapsed Time: {elapsed_time} seconds")
     # time.sleep(1)
     
 
