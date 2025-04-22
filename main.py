@@ -12,6 +12,7 @@ server = FastAPI()
 #Declaración de variables
 valveNum = 4
 soilMdata = []
+valvedata = []
 
 #Diccionario para DHT11
 dht11data = [
@@ -29,11 +30,15 @@ dht11data = [
 for i in range(valveNum):
     soilMdata.append({"id": i+1, "data": 0.5, "error_code": -1})
 
+#Diccionario para app (valves state)
+for i in range(valveNum):
+    valvedata.append({"id": i+1, "timer": -1, "state": False})
+
 #Diccionario para app (control)
 controldata = [
     {
         "id" : 1,
-        "manualOperation" : True
+        "manualOperation" : False
     },
     {
         "id" : 2,
@@ -117,8 +122,8 @@ async def soil_moisture_get(id : int):
 @server.put("/soil_moisture_data/{id}", tags = ["Humedad del suelo"])
 async def soil_moisture_put(
     id: int,
-    data: float = Body(),
-    error_code: int = Body()
+    data: float | None  = Body(default=None),
+    error_code: int | None  = Body(default=None)
 ):
     if not checkIdExists(soilMdata, id):
         raise HTTPException(status_code=404, detail="Item not found")
@@ -135,8 +140,31 @@ async def soil_moisture_put(
 #Request de app (Valves)    #Path3
 @server.get("/valves_state", tags = ["Estado de válvulas"])
 def valves():
-    return 
+    return valvedata
 
+@server.get("/valves_state/{id}", tags = ["Estado de válvulas"])
+async def valves_get(id : int):
+    for i in valvedata:
+        if i['id'] == id:
+            return i
+    raise HTTPException(status_code=404, detail="Item not found")
+
+@server.put("/valves_state/{id}", tags = ["Estado de válvulas"])
+async def valves_put(
+    id: int,
+    timer: int | None = Body(default=None),
+    state: bool | None = Body(default=None)
+):
+    if not checkIdExists(valvedata, id):
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    for i in valvedata:
+        if i["id"] == id:
+            i["timer"] = timer
+            i["state"] = state
+            return i
+    return[]
+    
 
 
 #Request de app (control)   #Path4
@@ -156,6 +184,7 @@ async def control_put(
     id: int,
     manualOperation: bool | None = Body(default=None),
     manualWatering: bool | None = Body(default=None),
+    etapa: int | None = Body(default=None),
     try_connect_sensor: int | None = Body(default=None)
 ):
 
@@ -173,7 +202,10 @@ async def control_put(
             return controldata[1]
 
         case 3:
-            raise HTTPException(status_code=400, detail="Bad request")
+            if etapa == None:
+                return Response(status_code=204)
+            controldata[2]["etapa"] = etapa
+            return controldata[2]
     
         case 4:
             if try_connect_sensor == None:
