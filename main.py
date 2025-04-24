@@ -10,7 +10,7 @@ server = FastAPI()
 
 
 #Declaración de variables
-valveNum = 4
+valveNum = 8
 soilMdata = []
 valvedata = []
 
