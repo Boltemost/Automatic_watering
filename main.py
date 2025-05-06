@@ -1,11 +1,24 @@
 from enum import Enum
 from fastapi import FastAPI, Body, HTTPException, Response
 from pydantic import BaseModel
+from pocketbase import PocketBase  # Client also works the same
+from pocketbase.client import FileUpload
+import asyncio
+import time
 
 
 
-#inicia FastAPI
+
+#inicia FastAPI y PocketBase API
 server = FastAPI()
+database = PocketBase('http://localhost:8090')
+
+
+#baseDatos = MySQL("http://sexo.com", admin, password)
+
+#baseDatos.query()
+
+#baseDatos.get("usuarios", id, incluya mensajes)
 
 
 
@@ -28,7 +41,7 @@ dht11data = [
 
 #Diccionario para app (soil moissture sensor)
 for i in range(valveNum):
-    soilMdata.append({"id": i+1, "data": 0.5, "error_code": -1})
+    soilMdata.append({"id": i+1, "low_moist_limit": 0.2, "high_moist_limit": 0.8, "data": 0.5, "error_code": -1})
 
 #Diccionario para app (valves state)
 for i in range(valveNum):
@@ -46,7 +59,7 @@ controldata = [
     },
     {
         "id" : 3,
-        "etapa" : 0
+        "etapa" : 2
     },
     {
         "id" : 4,
@@ -57,7 +70,7 @@ controldata = [
 
 
 #función para checker si id existe en diccionario
-def checkIdExists(array, id):
+async def checkIdExists(array, id):
     for obj in array:
         if obj["id"] == id:
             return True
@@ -67,12 +80,12 @@ def checkIdExists(array, id):
 
 #Request solicitados    #Path0
 @server.get('/', status_code=418) #check si el servidor esta funcionando
-def watering_can():
+async def watering_can():
     return "I'm a watering can"
 
 
 #Request del DHT11  #Path1
-@server.get("/climatic_variables", tags = ["Variables climáticas"])
+@server.get("/climatic_variables/body", tags = ["Variables climáticas"]) #hace request al cuerpo completo
 async def temp_humid():
     return dht11data
 
@@ -108,7 +121,7 @@ async def temp_humid_put(
 
 
 #Request de app (Soil moisture sensor)  #Path2
-@server.get("/soil_moisture_data", tags = ["Humedad del suelo"])
+@server.get("/soil_moisture_data/body", tags = ["Humedad del suelo"]) #hace request al cuerpo completo
 async def soil_moisture():
     return soilMdata
 
@@ -117,19 +130,33 @@ async def soil_moisture_get(id : int):
     for i in soilMdata:
         if i["id"] == id:
             return i
+
+
+    #llamar base de datos y pedirle id (id)
+    #SELECT * FROM TABLE WHERE id=${id}
+    #if existe, devolver info al user
+
     return Response(status_code=404)
 
 @server.put("/soil_moisture_data/{id}", tags = ["Humedad del suelo"])
 async def soil_moisture_put(
     id: int,
+    low_moist_limit: float | None  = Body(default=None),
+    high_moist_limit: float | None  = Body(default=None),
     data: float | None  = Body(default=None),
     error_code: int | None  = Body(default=None)
-):
+    ):
+
     if not checkIdExists(soilMdata, id):
         raise HTTPException(status_code=404, detail="Item not found")
+    
+    #llamar base de datos y crear dato
+    #pocketbase.crear(nose, pene)
 
     for i in soilMdata:
         if i["id"] == id:
+            i["low_moist_limit"] = low_moist_limit
+            i["high_moist_limit"] = high_moist_limit
             i["data"] = data
             i["error_code"] = error_code
             return i
@@ -138,8 +165,8 @@ async def soil_moisture_put(
 
 
 #Request de app (Valves)    #Path3
-@server.get("/valves_state", tags = ["Estado de válvulas"])
-def valves():
+@server.get("/valves_state/body", tags = ["Estado de válvulas"]) #hace request al cuerpo completo
+async def valves():
     return valvedata
 
 @server.get("/valves_state/{id}", tags = ["Estado de válvulas"])
@@ -168,8 +195,8 @@ async def valves_put(
 
 
 #Request de app (control)   #Path4
-@server.get("/control", tags = ["Sistema de control"])
-def control():
+@server.get("/control/body", tags = ["Sistema de control"]) #hace request al cuerpo completo
+async def control():
     return controldata
 
 @server.get("/control/{id}", tags = ["Sistema de control"])
@@ -218,3 +245,30 @@ async def control_put(
                 raise HTTPException(status_code=404, detail="Item not found")
             return []
 
+
+
+
+#Requests a la base de datos
+
+async def database_connect():
+    try:
+        # or as admin
+        admin_data = database.admins.auth_with_password("josue30_97@hotmail.com", "wabibabo")
+
+        # check if admin token is valid
+        print(admin_data.is_valid)
+    except: 
+        return None
+
+
+async def database_create(collection, body): #Chechea si errores y el estado del servidor, si request falla devuelve None
+    try:
+        return await database.collection(collection).create(body)
+    except:
+        return None
+
+
+async def send_data_database():
+    while True:
+        await database_create("Temperature", dht11data[0])
+        await asyncio.sleep(10)
