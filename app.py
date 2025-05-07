@@ -1,6 +1,7 @@
 import RPi.GPIO as gpio
 import btfpy as btf
 import time
+from time import gmtime, strftime
 import requests as rqt
 import json
 
@@ -12,11 +13,11 @@ valveNum=8
 manualOperation=False
 manualWatering=False
 waterSensorHigh, waterSensorLow=True, True
-etapa = 0 #etapa va de 0 - 2
+etapa = 2 #etapa va de 0 - 2
 
 soilM = [] #Designación de los sensores de humedad
 for i in range(valveNum):
-    soilM.append({"lenode": 2+i, "data": 0.5, "last_read": time.time(), "state": False}) #(State determina si el sensor se encuentra activo o inactivo)
+    soilM.append({"lenode": 2+i, "low_moist_limit": 0.2, "high_moist_limit": 0.8, "data": 0.5, "last_read": time.time(), "state": False}) #(State determina si el sensor se encuentra activo o inactivo)
 soilMObj = []
 
 valve = [] #Designación de las válvulas
@@ -26,14 +27,14 @@ valveObj = []
 
 controlObj = []
 
-temp= [0, 0] #Data del sensor: temp=Temperatura, humid=Humedad
-humid= [0, 0]
 
 index = [-1]
 
 tries = 0
 
 last_sent_time = {}
+
+tryConnectSensor = -1
 
 
 
@@ -49,11 +50,33 @@ def notify_callback(lenode,cticn,data,datlen):
     return(0)
 
 
+def ferret(): #Bluetooth Ferret
+    #                                  _,-/"---,
+    #           ;"""""""""";         _/;; ""  <@`---v
+    #         ; :::::  ::  "\      _/ ;;  "    _.../
+    #        ;"     ;;  ;;;  \___/::    ;;,'""""
+    #       ;"          ;;;;.  ;;  ;;;  ::/
+    #      ,/ / ;;  ;;;______;;;  ;;; ::,/
+    #      /;;V_;;   ;;;       \       /
+    #      | :/ / ,/            \_ "")/
+    #      | | / /"""=            \;;\""=
+    #      ; ;{::""""""=            \"""=
+    #   ;"""";
+    #   \/"""
+    #      __                   _   
+    #     / _|                 | |  
+    #    | |_ ___ _ __ _ __ ___| |_ 
+    #    |  _/ _ \ '__| '__/ _ \ __|
+    #    | ||  __/ |  | | |  __/ |_ 
+    #    |_| \___|_|  |_|  \___|\__|
+    return
+
+
 #Función para conectar nodos
 def connectNode (node, tries):
-    if btf.Connect_node(node,btf.CHANNEL_LE,0) == 0: #Check para comprobar si los nodos se encuentran conectados
+    if btf.Connect_node(node,btf.CHANNEL_LE,0) == 0: #Check para comprobar si los nodos se encuentran conectados #Comprueba error 1
         soilM_put((node-2), 1)
-        print("Error (Código 1): Nodo ", node, " no identificado")
+        print("Error (Código 1): Nodo ", node-2, " no identificado")
     else:
         while btf.Find_ctics(node)<=0 and tries <= 100:# Si el nodo se encuentra disponible, lo inicia
             btf.Connect_node(node,btf.CHANNEL_LE,0)
@@ -64,36 +87,40 @@ def connectNode (node, tries):
             index[0] = btf.Find_ctic_index(node, btf.UUID_2, btf.Strtohex("2A6F"))
             btf.Notify_ctic(node,index[0],btf.NOTIFY_ENABLE,notify_callback)
             soilM[node-2]["state"] = True
-        else: #Si falla la conexión entrega error
+        else: #Si falla la conexión entrega error                            #Comprueba error 2
             soilM_put(node, 2)
-            print("Error (Código 2): No se estableció conexión con el nodo ", node)
+            print("Error (Código 2): No se estableció conexión con el nodo ", node-2)
 
 
 
-#Función comprobación última hora de lectura de humedad
-def timeChecksoilM (node):
-
-    maxTime = soilM[node]["last_read"] + 5 #tiempo maximo de desconexión de 15 segundos
+#Función comprobación última hora de lectura de humedad (apaga cualquier sensor del cual no reciba datos)
+def timeChecksoilM (node):                                                   #Comprueba error 3
+    maxTime = soilM[node]["last_read"] + 5 #tiempo maximo de desconexión de 5 segundos
     if (maxTime < time.time()):
         print("Error (Código 3): Sensor", node, "desconectado o transmisión de datos interrumpida")
-        btf.Wait_for_disconnect(node+2,1000)
         soilM[node]["state"] = False
         soilM_put(node, 3)
+        btf.Wait_for_disconnect(node+2,1000)
     return
 
 
 
-#Función comprobación ultima hora de escritura de válvula y del timer
-def timeCheckValve(node):
-    maxTime = valve[node]["opening_time"] + 600
+#Función comprobación ultima hora de escritura de válvula (cierra cualquier valvula abierta por mas de 10 minutos)
+def timeCheckValve(node):                                                   #Comprueba error 4
+    maxTime = valve[node]["opening_time"] + 600 # 10 minutos de tiempo limite para cualquier valvula
     if maxTime < time.time():
         valve[node]["state"] = False
         valves_put (node)
-        if soilM[node]["state"]:
-            print("Error (Código 4): Lectura incorrecta en el sensor", node, ", activo por demasiado tiempo")
+
+        if soilM[node]["state"] and etapa == 2: #desactiva el sensor en caso de que se encuentre en automatico
+            print("Error (Código 4): Datos incorrectos del sensor", node, ", activo por demasiado tiempo")
             soilM[i]["state"] = False
             soilM_put(node, 4)
-    return
+            btf.Wait_for_disconnect(node+2,1000)
+            return
+        
+        print("Error (Código 4): Válvula", node, " activa por demasiado tiempo")
+        return
 
 
 
@@ -105,19 +132,10 @@ def make_request(path, method, json=None): #Chechea si errores y el estado del s
         return None
     
 
-def soilM_put(i, error_code = -1): #Entrega datos del Soil Moiture Sensor cuando solicita un put request
-    #print ("node :", i, "error code", error_code)
-    soilMObj = {"id": i+1, "data": soilM[i]["data"], "error_code": error_code}
-    rsp = make_request(f'soil_moisture_data/{i+1}', "PUT", json=soilMObj)
-    if rsp == None:
-        return
-    #print("Status Code: ", rsp.status_code)
-    #print("Response Body:", rsp.content.decode())
 
+def soilM_get ():
 
-def valves_get (id, request):
-    valveObj = {"id": id}
-    rsp = make_request(f'valves_state/{id}', "GET", json=valveObj)
+    rsp = make_request(f"soil_moisture_data/body", "GET")
 
     if rsp != None: 
         try:
@@ -126,20 +144,57 @@ def valves_get (id, request):
         except ValueError:
             # Si le tira un string ahí raro
             par = json.loads(rsp.text)
-    
-    match request:
-        case "timer":
-            if rsp == None:
-                return -1
-            return par["timer"]
-        case "state":
-            if rsp == None:
-                return valve[i]["state"]
-            return par["state"]
+
+    if rsp == None:
+        return
+
+    for i in range (valveNum):
+        soilM[i]["low_moist_limit"] = par[i]["low_moist_limit"]
+        soilM[i]["high_moist_limit"] = par[i]["high_moist_limit"]
+    return
+
+
+def soilM_put(i, error_code = -1): #Entrega datos del Soil Moiture Sensor cuando solicita un put request
+    #print ("node :", i, "error code", error_code)
+    soilMObj = {"id": i+1,
+                "low_moist_limit": soilM[i]["low_moist_limit"],
+                "high_moist_limit": soilM[i]["high_moist_limit"],
+                "data": soilM[i]["data"],
+                "error_code": error_code
+                }
+    rsp = make_request(f"soil_moisture_data/{i+1}", "PUT", json=soilMObj)
+    if rsp == None:
+        return
+    #print("Status Code: ", rsp.status_code)
+    #print("Response Body:", rsp.content.decode())
+
+
+def valves_get ():
+
+    rsp = make_request(f"valves_state/body", "GET")
+
+    if rsp != None: 
+        try:
+            # Parece que el server le devuelve JSON entonces acomodelo así parseandolo a lo chancho chingo
+            par = rsp.json()
+        except ValueError:
+            # Si le tira un string ahí raro
+            par = json.loads(rsp.text)
+
+    if rsp == None:
+        return
+
+    for i in range (valveNum):
+        valve[i]["state"] = par[i]["state"]
+        valve[i]["timer"] = par[i]["timer"]
+    return
 
 
 def valves_put (i):
-    valveObj = {"id": i+1, "timer": valve[i]["timer"], "state": valve[i]["state"]}
+    valveObj = {"id": i+1,
+                "timer": valve[i]["timer"], 
+                "state": valve[i]["state"]
+                }
     rsp = make_request(f'valves_state/{i+1}', "PUT", json=valveObj)
     if rsp == None:
         return
@@ -147,9 +202,9 @@ def valves_put (i):
     #print("Response Body:", rsp.content.decode())
     
 
-def control_get(id): #recive datos de control cuando solicita un get request
-    controlObj = {"id": id}
-    rsp = make_request(f'control/{id}', "GET", json=controlObj)
+def control_get(manualOperation, manualWatering, tryConnectSensor): #recive datos de control cuando solicita un get request
+    #controlObj = {"id": id}
+    rsp = make_request(f'control/body', "GET", json=controlObj)
 
     if rsp != None: 
         try:
@@ -159,22 +214,16 @@ def control_get(id): #recive datos de control cuando solicita un get request
             # Si le tira un string ahí raro
             par = json.loads(rsp.text)
 
-    match id:
-        case 1:
-            if rsp == None:
-                return False #Respuesta por defecto para "manualOperation" en caso de perder coneccion con el servidor
-            return par["manualOperation"]
-        case 2:
-            if rsp == None:
-                return False #Respuesta por defecto para "manualWatering" en caso de perder coneccion con el servidor
-            return par["manualWatering"]
-        case 4:
-            if rsp == None:
-                return -1
-            return par["try_connect_sensor"]
 
-    #print("Status Code: ", rsp.status_code)
-    #print("Response Body:", rsp.content.decode())
+    if rsp == None:
+        return (False, False, -1)
+    
+    for i in range (valveNum):
+
+        manualOperation = par[0]["manualOperation"]
+        manualWatering = par[1]["manualWatering"]
+        tryConnectSensor = par[3]["try_connect_sensor"]
+    return (manualOperation, manualWatering, tryConnectSensor)
 
 
 def control_put(id, dato): #Entrega datos de control cuando solicita un put request
@@ -210,26 +259,11 @@ for node in range(2,valveNum+2): #Enlace con cada nodo (valor inicia en 2) #####
     connectNode (node, tries)
 
 
-#                                  _,-/"---,
-#           ;"""""""""";         _/;; ""  <@`---v
-#         ; :::::  ::  "\      _/ ;;  "    _.../
-#        ;"     ;;  ;;;  \___/::    ;;,'""""
-#       ;"          ;;;;.  ;;  ;;;  ::/
-#      ,/ / ;;  ;;;______;;;  ;;; ::,/
-#      /;;V_;;   ;;;       \       /
-#      | :/ / ,/            \_ "")/
-#      | | / /"""=            \;;\""=
-#      ; ;{::""""""=            \"""=
-#   ;"""";
-#   \/"""
-#      __                   _   
-#     / _|                 | |  
-#    | |_ ___ _ __ _ __ ___| |_ 
-#    |  _/ _ \ '__| '__/ _ \ __|
-#    | ||  __/ |  | | |  __/ |_ 
-#    |_| \___|_|  |_|  \___|\__|
 
 
+
+
+print ("etapa 2")
 
 #loop
 while system:
@@ -257,7 +291,7 @@ while system:
             now = time.time()
             # Get the last sent time for this index, default to 0
             last_time = last_sent_time.get(i, 0)
-            if now - last_time >= 2:  # 2 second
+            if now - last_time >= 5:  # 5 second
                 soilM_put(i)
                 last_sent_time[i] = now  # Update the last time
 
@@ -265,8 +299,7 @@ while system:
     # manualOperation = not gpio.input(38)
     # manualWatering = not gpio.input(40)
 
-    manualOperation = control_get (1)
-    manualWatering = control_get (2)
+    manualOperation, manualWatering, tryConnectSensor = control_get(manualOperation, manualWatering, tryConnectSensor)
 
 
     #Check de tiempo de escritura de sensores
@@ -293,14 +326,20 @@ while system:
         for i in range(valveNum):
             valve[i]["state"] = False
             valves_put (i)
+        
+        for i in range(valveNum):
+            if valve[i]["timer"] > time.time():
+                valve[i]["state"] = True
+                valves_put (i)
+
     
 
     if etapa == 0: #En etapa 0 permite encender o apagar las valvulas individualemnte desdel el api
+        valves_get () #Recibe los valores de estado de los sensores y timer del usuario
         for i in range(valveNum):
-            valve[i]["state"] = valves_get (i+1, "state")
-            valve[i]["timer"] = valves_get (i+1, "timer")
             if valve[i]["timer"] > 0:
                 if  valve[i]["timer"] < time.time():
+                    print("Temporizador finalizado a", strftime("%H:%M:%S", gmtime(valve[i]["timer"])))
                     valve[i]["state"] = False
                     valve[i]["timer"] = -1
                     valves_put (i)
@@ -329,25 +368,25 @@ while system:
         control_put(2,False)
         
     if etapa == 2: #En etapa 2 permite reconectar los sensores que se hubieran apagado desde el api
-        tryconnect = control_get(4)
-        if tryconnect > 0:
-            connectNode (tryconnect+1, tries)
+        soilM_get ()
+        if tryConnectSensor > 0:
+            connectNode (tryConnectSensor+1, tries)
             control_put (4, -1)
-            soilM[tryconnect-1]["last_read"] == time.time()
+            soilM[tryConnectSensor-1]["last_read"] == time.time()
 
 
 
     #chequeo de humedad para cierre o apertura de válvulas
     for i in range (valveNum):
-        if not valve[i]["state"]:
-            if (etapa == 2 and soilM[i]["data"] <= 0.2) and soilM[i]["state"]:
+        if not valve[i]["state"]: #abre las valvulas si ya se alcanza la humedad mínima
+            if (etapa == 2 and soilM[i]["data"] <= soilM[i]["low_moist_limit"]) and soilM[i]["state"]:
                 valve[i]["state"]=True
                 valve[i]["opening_time"] = time.time()
                 valves_put (i)
 
     for i in range (valveNum):
-        if valve[i]["state"]:
-            if (etapa == 2 and soilM[i]["data"] >= 0.8) or (etapa == 2 and not soilM[i]["state"]):
+        if valve[i]["state"]: #cierra las válvulas si ya se alcanza la humedad máxima
+            if (etapa == 2 and soilM[i]["data"] >= soilM[i]["high_moist_limit"]) or (etapa == 2 and not soilM[i]["state"]):
                 valve[i]["state"]=False
                 valves_put (i)
 
@@ -358,7 +397,7 @@ while system:
     # end_time = time.time()
     # elapsed_time = end_time - start_time
     # print(f"Elapsed Time: {elapsed_time} seconds")
-    # time.sleep(10)
+    # time.sleep(20)
     
 
 # https://www.youtube.com/watch?v=OWodAv1KHaM (información importante)
