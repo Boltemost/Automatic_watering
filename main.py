@@ -4,7 +4,9 @@ from pydantic import BaseModel
 from pocketbase import PocketBase  # Client also works the same
 from pocketbase.client import FileUpload
 import asyncio
+import json
 import time
+import datetime
 
 
 
@@ -14,18 +16,17 @@ server = FastAPI()
 database = PocketBase('http://localhost:8090')
 
 
-#baseDatos = MySQL("http://sexo.com", admin, password)
-
-#baseDatos.query()
-
-#baseDatos.get("usuarios", id, incluya mensajes)
-
 
 
 #Declaración de variables
 valveNum = 8
 soilMdata = []
 valvedata = []
+namedata = []
+
+
+presets_data = ()
+
 
 #Diccionario para DHT11
 dht11data = [
@@ -39,9 +40,16 @@ dht11data = [
     }
 ]
 
+#Diccionario database autosave
+pocketbasedata = [
+    {
+        "state" : True
+    }
+]    
+
 #Diccionario para app (soil moissture sensor)
 for i in range(valveNum):
-    soilMdata.append({"id": i+1, "low_moist_limit": 0.2, "high_moist_limit": 0.8, "data": 0.5, "error_code": -1})
+    soilMdata.append({"id": i+1, "low_moist_limit": 0.2, "high_moist_limit": 0.8, "data": 0.5, "error_code": 1})
 
 #Diccionario para app (valves state)
 for i in range(valveNum):
@@ -68,9 +76,14 @@ controldata = [
 
 ]
 
+#Diccionario para nombre de sensor
+for i in range(valveNum):
+    namedata.append({"id": i+1, "name": f"Sensor {i+1}"})
+
+
 
 #función para checker si id existe en diccionario
-async def checkIdExists(array, id):
+def checkIdExists(array, id):
     for obj in array:
         if obj["id"] == id:
             return True
@@ -78,13 +91,13 @@ async def checkIdExists(array, id):
 
 
 
-#Request solicitados    #Path0
+#Request solicitados                                                                                        #Path0
 @server.get('/', status_code=418) #check si el servidor esta funcionando
 async def watering_can():
     return "I'm a watering can"
 
 
-#Request del DHT11  #Path1
+#Request del DHT11                                                                                          #Path1
 @server.get("/climatic_variables/body", tags = ["Variables climáticas"]) #hace request al cuerpo completo
 async def temp_humid():
     return dht11data
@@ -92,7 +105,7 @@ async def temp_humid():
 @server.get("/climatic_variables/{id}", tags = ["Variables climáticas"])
 async def temp_humid_get(id : int):
     for i in dht11data:
-        if i['id'] == id:
+        if i["id"] == id:
             return i
     raise HTTPException(status_code=404, detail="Item not found")
 
@@ -120,7 +133,20 @@ async def temp_humid_put(
     return []
 
 
-#Request de app (Soil moisture sensor)  #Path2
+#Request de database                                                                                        #Path2
+@server.get("/database_state", tags = ["Estado de pocketbase"]) #hace request al estado de la base de datos
+async def database_state_get():
+    return pocketbasedata
+
+@server.put("/database_state", tags = ["Estado de pocketbase"])
+async def database_state_put(state : bool):
+    pocketbasedata[0]["state"] = state
+    return pocketbasedata
+
+    
+
+
+#Request de app (Soil moisture sensor)                                                                      #Path3
 @server.get("/soil_moisture_data/body", tags = ["Humedad del suelo"]) #hace request al cuerpo completo
 async def soil_moisture():
     return soilMdata
@@ -130,11 +156,6 @@ async def soil_moisture_get(id : int):
     for i in soilMdata:
         if i["id"] == id:
             return i
-
-
-    #llamar base de datos y pedirle id (id)
-    #SELECT * FROM TABLE WHERE id=${id}
-    #if existe, devolver info al user
 
     return Response(status_code=404)
 
@@ -150,9 +171,6 @@ async def soil_moisture_put(
     if not checkIdExists(soilMdata, id):
         raise HTTPException(status_code=404, detail="Item not found")
     
-    #llamar base de datos y crear dato
-    #pocketbase.crear(nose, pene)
-
     for i in soilMdata:
         if i["id"] == id:
             i["low_moist_limit"] = low_moist_limit
@@ -164,7 +182,7 @@ async def soil_moisture_put(
     
 
 
-#Request de app (Valves)    #Path3
+#Request de app (Valves)                                                                                    #Path4
 @server.get("/valves_state/body", tags = ["Estado de válvulas"]) #hace request al cuerpo completo
 async def valves():
     return valvedata
@@ -172,7 +190,7 @@ async def valves():
 @server.get("/valves_state/{id}", tags = ["Estado de válvulas"])
 async def valves_get(id : int):
     for i in valvedata:
-        if i['id'] == id:
+        if i["id"] == id:
             return i
     raise HTTPException(status_code=404, detail="Item not found")
 
@@ -189,12 +207,13 @@ async def valves_put(
         if i["id"] == id:
             i["timer"] = timer
             i["state"] = state
+            await sensor_data_create(id-1)
             return i
     return[]
     
 
 
-#Request de app (control)   #Path4
+#Request de app (control)                                                                                   #Path5
 @server.get("/control/body", tags = ["Sistema de control"]) #hace request al cuerpo completo
 async def control():
     return controldata
@@ -202,7 +221,7 @@ async def control():
 @server.get("/control/{id}", tags = ["Sistema de control"])
 async def control_get(id : int):
     for i in controldata:
-        if i['id'] == id:
+        if i["id"] == id:
             return i
     raise HTTPException(status_code=404, detail="Item not found")
 
@@ -246,29 +265,177 @@ async def control_put(
             return []
 
 
+#Request nombre de sensor                                                                                 #Path6
+@server.get("/name_sensor/body", tags = ["Infomación de sensores"]) #hace request al cuerpo completo
+async def name_sensor():
+    return namedata
+
+@server.get("/name_sensor/{id}", tags = ["Infomación de sensores"])
+async def name_sensor_get(id : int):
+    for i in namedata:
+        if i["id"] == id:
+            return i
+    raise HTTPException(status_code=404, detail="Item not found")
+
+@server.put("/name_sensor/{id}", tags = ["Infomación de sensores"])
+async def name_sensor_put(
+    id: int,
+    name: str | None = Body(default=None)
+):
+    if not checkIdExists(namedata, id):
+        raise HTTPException(status_code=404, detail="Item not found")
+    
+    for i in namedata:
+        if i["id"] == id:
+            i["name"] = name
+            return i
+    return[]
+    
 
 
-#Requests a la base de datos
 
+
+#Requests a la base de datos                                                ####    DATABASE
 async def database_connect():
     try:
-        # or as admin
-        admin_data = database.admins.auth_with_password("josue30_97@hotmail.com", "wabibabo")
+        # Authenticate as admin
+        admin_data = database.admins.auth_with_password("EMAIL", "PASSWROD")
+        print(f"Database connected as following user: {admin_data.is_valid}")
+        return admin_data.is_valid
+    except Exception as e:
+        print(f"Database connection error: {e}") # Catch error
+        return False
 
-        # check if admin token is valid
-        print(admin_data.is_valid)
-    except: 
-        return None
 
 
-async def database_create(collection, body): #Chechea si errores y el estado del servidor, si request falla devuelve None
+@server.on_event("startup")
+async def startup_event():
+    # Try to connect to database on startup please don't fail
+    connected = await database_connect()
+    if not connected:
+        print("WARNING: Could not connect to database at startup")
+    
+    # Start the background task for database syncing
+    asyncio.create_task(send_data_database())
+    asyncio.create_task(download_data_database())
+    print("Background tasks started")
+
+
+
+async def database_create(collection, body):
     try:
-        return await database.collection(collection).create(body)
-    except:
+        result = database.collection(collection).create(body)
+        print(f"Data saved to {collection}: {body}")
+        return result
+    except Exception as e:
+        print(f"Database creation error in {collection}: {e}")
         return None
+
+
+
+async def database_getFullList(collection = str):
+    try:
+        result = database.collection(collection).get_full_list()
+        print(f"Getting data from {collection}")
+        return result
+    except Exception as e:
+        print(f"Database creation error in {collection}: {e}")
+        return None
+
+
+
+async def database_update(collection, record_id, body):
+    try:
+        result = database.collection(collection).update(record_id, body)
+        print(f"Data saved to {collection}: {body}")
+        return result
+    except Exception as e:
+        print(f"Database creation error in {collection}: {e}")
+        return None
+
 
 
 async def send_data_database():
+    print("Starting database sync task...")
     while True:
-        await database_create("Temperature", dht11data[0])
-        await asyncio.sleep(10)
+
+        await asyncio.sleep(1200)
+        # Wait 1200 seconds before next sync? Should be adjustable just in case pa que sepa
+
+        if pocketbasedata[0]["state"]:
+
+            try:
+                # Format data for database insert
+                temp_data = {
+                    "temp": dht11data[0]["temp"]
+                }
+                
+                # Send temperature data to database
+                result = await database_create("temperature", temp_data)
+                if result is None:
+                    print("Failed to save temperature data")
+                    
+                # Format data for database insert
+                humid_data = {
+                    "humd": dht11data[1]["humid"]
+                }
+
+                # Send Relative humidity data to database
+                result = await database_create("relative_humidity", humid_data)
+                if result is None:
+                    print("Failed to save Relative humidity data")
+                
+                
+                for i in range(valveNum):
+                    if soilMdata[i]["error_code"] <= 0:
+                        await sensor_data_create(i)
+
+
+                print("Data sent to database")
+
+            except Exception as e:
+                print(f"Error in database sync: {e}")
+            
+
+
+async def sensor_data_create(i):
+    
+    # Format data for database insert
+    sensor_data = {
+        "sensor_id": i+1,
+        "soilM_sensor": soilMdata[i]["data"],
+        "valve_state": valvedata[i]["state"]
+    }
+    
+    # Send Relative humidity data to database
+    result = await database_create(f"{i+1:02}_soilM_and_valve_data", sensor_data)
+    if result is None:
+        print("Failed to save Relative humidity data")
+    return
+
+
+async def download_data_database():
+
+    await asyncio.sleep(2)
+    presets_data = await database_getFullList("presets")
+    for i in range (valveNum):
+        namedata[i]["name"] = presets_data[i].name
+        soilMdata[i]["low_moist_limit"] = presets_data[i].low_moist_limit
+        soilMdata[i]["high_moist_limit"] = presets_data[i].high_moist_limit
+
+    print("Data read from database")
+    return
+
+
+async def update_data_database(i):
+
+    return
+
+
+def Bnuy():
+      
+            #  /)  /)
+            # ( •-•) <(https://youtu.be/Jb9caDRp_30?si=0Gjo8C7aXNryNGFE)
+            # /づづ
+     
+    return
