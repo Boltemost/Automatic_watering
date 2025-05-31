@@ -4,16 +4,26 @@ from pydantic import BaseModel
 from pocketbase import PocketBase  # Client also works the same
 from pocketbase.client import FileUpload
 import asyncio
-import json
 import time
-import datetime
+
+from fastapi.middleware.cors import CORSMiddleware
 
 
 
 
-#inicia FastAPI y PocketBase API
+#inicia FastAPI, PocketBase API y CORSMiddleware
+# set up CORS to allow requests from the frontend
 server = FastAPI()
 database = PocketBase('http://localhost:8090')
+
+server.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 
 
@@ -23,9 +33,7 @@ valveNum = 8
 soilMdata = []
 valvedata = []
 namedata = []
-
-
-presets_data = ()
+presetsdata = []
 
 
 #Diccionario para DHT11
@@ -73,12 +81,45 @@ controldata = [
         "id" : 4,
         "try_connect_sensor" : -1
     }
-
 ]
+
 
 #Diccionario para nombre de sensor
 for i in range(valveNum):
     namedata.append({"id": i+1, "name": f"Sensor {i+1}"})
+
+
+#Diccionario para watercontrol (control de agua)
+waterdata = [
+    {
+        "id" : 1,
+        "water_flow" : 0.0
+    },
+    {
+        "id" : 2,
+        "water_tank_level" : 0.0
+    },
+    {
+        "id" : 3,
+        "irrigation" : False
+    },
+    {
+        "id" : 4,
+        "tap_water_valve" : False
+    },
+    {
+        "id" : 5,
+        "pump" : False
+    },
+    {
+        "id" : 6,
+        "drop_water_tank_valve" : False
+    },
+    {
+        "id" : 7,
+        "error_code" : -1
+    }
+]
 
 
 
@@ -171,12 +212,21 @@ async def soil_moisture_put(
     if not checkIdExists(soilMdata, id):
         raise HTTPException(status_code=404, detail="Item not found")
     
+    send_data = False
+
     for i in soilMdata:
         if i["id"] == id:
+            if i["low_moist_limit"] != low_moist_limit or i["high_moist_limit"] != high_moist_limit:
+                send_data = True
             i["low_moist_limit"] = low_moist_limit
             i["high_moist_limit"] = high_moist_limit
             i["data"] = data
             i["error_code"] = error_code
+            if send_data:
+                await update_data_database(id-1)
+                send_data = False
+            if i["error_code"] > 0:
+                await send_log_database(3, f"Sensor de humedad del suelo {id} en estado de error: error {i['error_code']}")
             return i
     return[]
     
@@ -208,6 +258,9 @@ async def valves_put(
             i["timer"] = timer
             i["state"] = state
             await sensor_data_create(id-1)
+            if i["timer"] > 0:
+                await send_log_database(2, f"Válvula {id} activada por {timer-time.time()} segundos")
+            await send_log_database(2, f"Estado de válvula {id}: {state}")
             return i
     return[]
     
@@ -251,6 +304,13 @@ async def control_put(
             if etapa == None:
                 return Response(status_code=204)
             controldata[2]["etapa"] = etapa
+            match etapa:
+                case 0:
+                    await send_log_database(1, "Modo manual, válvulas cerradas: etapa 0")
+                case 1:
+                    await send_log_database(1, "Modo manual, válvulas abiertas: etapa 1")
+                case 2:
+                    await send_log_database(1, "Modo automático: etapa 2")
             return controldata[2]
     
         case 4:
@@ -288,14 +348,102 @@ async def name_sensor_put(
     for i in namedata:
         if i["id"] == id:
             i["name"] = name
+            await update_data_database(id-1)
             return i
     return[]
+
+
+#Request de waterapp (water_data)                                                                                   #Path7
+@server.get("/water_data/body", tags = ["gestión del agua"]) #hace request al cuerpo completo
+async def water_data():
+    return waterdata
+
+@server.get("/water_data/{id}", tags = ["gestión del agua"])
+async def water_data_get(id : int):
+    for i in waterdata:
+        if i["id"] == id:
+            return i
+    raise HTTPException(status_code=404, detail="Item not found")
+
+@server.put("/water_data/{id}", tags = ["gestión del agua"])
+async def water_data_put(
+    id: int,
+    water_flow: float | None = Body(default=None),
+    water_tank_level: float | None = Body(default=None),
+    irrigation: bool | None = Body(default=None),
+    tap_water_valve: bool | None = Body(default=None),
+    pump: bool | None = Body(default=None),
+    drop_water_tank_valve: bool | None = Body(default=None),
+    error_code: int | None = Body(default=None)
+):
+
+    match id:
+        case 1:
+            if water_flow == None:
+                return Response(status_code=204)
+            waterdata[0]["water_flow"] = water_flow
+            return waterdata[0]
+        
+        case 2:
+            if water_tank_level == None:
+                return Response(status_code=204)
+            waterdata[1]["water_tank_level"] = water_tank_level
+            return waterdata[1]
+
+        case 3: #Es una variable que genera el servidor si cualquier valvedata[i] == true
+            return Response("This endpoint is read-only", status_code=405)
+    
+        case 4:
+            if tap_water_valve == None:
+                return Response(status_code=204)
+            waterdata[3]["tap_water_valve"] = tap_water_valve
+            return waterdata[3]
+        
+        case 5:
+            if pump == None:
+                return Response(status_code=204)
+            waterdata[4]["pump"] = pump
+            return waterdata[4]
+
+        case 6:
+            if drop_water_tank_valve == None:
+                return Response(status_code=204)
+            waterdata[5]["drop_water_tank_valve"] = drop_water_tank_valve
+            return waterdata[5]
+        
+        case 7:
+            if error_code == None:
+                return Response(status_code=204)
+            waterdata[6]["error_code"] = error_code
+            return waterdata[6]
+
+        case _:
+            if not checkIdExists(waterdata, id):
+                raise HTTPException(status_code=404, detail="Item not found")
+            return []
+
+
+async def check_irrigation(): # Check if irrigation is active
+    while True:
+
+        await asyncio.sleep(1)
+        
+        # If no valves are open, set irrigation to False
+        data = False
+        
+        for i in range(valveNum): # Check if any valve is open
+            if valvedata[i]["state"]:
+                # If any valve is open, set irrigation to True
+                data = True
+        
+        waterdata[2]["irrigation"] = data
+
     
 
 
 
-
-#Requests a la base de datos                                                ####    DATABASE
+###############################################################################################################################
+#Requests a la base de datos                                                        DATABASE
 async def database_connect():
     try:
         # Authenticate as admin
@@ -318,11 +466,12 @@ async def startup_event():
     # Start the background task for database syncing
     asyncio.create_task(send_data_database())
     asyncio.create_task(download_data_database())
+    asyncio.create_task(check_irrigation())
     print("Background tasks started")
 
 
 
-async def database_create(collection, body):
+async def database_create(collection, body): #Crear un registro en la base de datos
     try:
         result = database.collection(collection).create(body)
         print(f"Data saved to {collection}: {body}")
@@ -333,7 +482,7 @@ async def database_create(collection, body):
 
 
 
-async def database_getFullList(collection = str):
+async def database_getFullList(collection = str): #Obtener todos los registros de una colección
     try:
         result = database.collection(collection).get_full_list()
         print(f"Getting data from {collection}")
@@ -344,7 +493,7 @@ async def database_getFullList(collection = str):
 
 
 
-async def database_update(collection, record_id, body):
+async def database_update(collection, record_id, body): #Actualizar un registro en la base de datos
     try:
         result = database.collection(collection).update(record_id, body)
         print(f"Data saved to {collection}: {body}")
@@ -355,7 +504,7 @@ async def database_update(collection, record_id, body):
 
 
 
-async def send_data_database():
+async def send_data_database(): # Enviar temp, hum, y sensor data a la base de datos cada 20 minutos
     print("Starting database sync task...")
     while True:
 
@@ -398,7 +547,7 @@ async def send_data_database():
             
 
 
-async def sensor_data_create(i):
+async def sensor_data_create(i): # Crea un fomato con los datos del sensor de humedad del suelo y el estado de la válvula
     
     # Format data for database insert
     sensor_data = {
@@ -414,22 +563,60 @@ async def sensor_data_create(i):
     return
 
 
-async def download_data_database():
+async def download_data_database(): #descarga presets de la base de datos y los guarda en presetsdata
 
-    await asyncio.sleep(2)
-    presets_data = await database_getFullList("presets")
+    # await asyncio.sleep(2)
+    data = await database_getFullList("presets")
+    
     for i in range (valveNum):
-        namedata[i]["name"] = presets_data[i].name
-        soilMdata[i]["low_moist_limit"] = presets_data[i].low_moist_limit
-        soilMdata[i]["high_moist_limit"] = presets_data[i].high_moist_limit
+        presetsdata.append(data[i])
+
+        namedata[i]["name"] = presetsdata[i].name
+        soilMdata[i]["low_moist_limit"] = presetsdata[i].low_moist_limit
+        soilMdata[i]["high_moist_limit"] = presetsdata[i].high_moist_limit
 
     print("Data read from database")
+    return 
+
+
+async def update_data_database(i):  # Actualiza los datos de presetsdata en la base de datos
+    # Format data for database insert
+    presets_data = {
+        "sensor_id": i+1,
+        "name": namedata[i]["name"],
+        "low_moist_limit": soilMdata[i]["low_moist_limit"],
+        "high_moist_limit": soilMdata[i]["high_moist_limit"]
+    }
+    
+    # Send temperature data to database
+    record_id = presetsdata[i].id
+    await database_update("presets", record_id, presets_data)
+    print("Data sent to database")
     return
 
 
-async def update_data_database(i):
+async def send_log_database(id, description): # Enviar logs a la base de datos a la colección logs
 
+    if not pocketbasedata[0]["state"]:
+        return
+    
+    # Format data for database insert
+    log_data = {
+        "log_id": id,
+        "description": description
+    }
+    
+    # Send logs data to database
+    result = await database_create("logs", log_data)
+    if result is None:
+        print("Failed to save log data", log_data)
     return
+
+
+async def a():
+    a()
+    return
+
 
 
 def Bnuy():
