@@ -9,15 +9,13 @@
 #include <WiFiManager.h> // https://github.com/tzapu/WiFiManager
 #include <WiFi.h>
 
-using namespace std;
-
 
 //Declaración de variables
 const int trigPin = 16;
 const int echoPin = 17;
 const int TRIGGER_PIN = 120;
 
-float duration, distance; 
+float duration, longitude; 
 
 int timeout = 10; // seconds to run for
 
@@ -38,15 +36,13 @@ void setup() {
   
   pinMode(TRIGGER_PIN, INPUT_PULLUP);
 
-
-  
 }
 
 
 void loop() { // put your main code here, to run repeatedly:
   // Wifi configuration, triggered by pin 10
   if ( digitalRead(TRIGGER_PIN) == LOW ) {
-    thread t(wifi_connect);
+    std::thread t(wifi_connect);
     
   }
 
@@ -59,12 +55,13 @@ void loop() { // put your main code here, to run repeatedly:
 	digitalWrite(trigPin, LOW);  
 
   duration = pulseIn(echoPin, HIGH);
-  distance = (duration*.0343)/2;
+  longitude = (duration*.0343)/2;
   Serial.print("Distance: ");
-  Serial.println(distance);
+  Serial.println(longitude);
   delay(100);
 
 }
+
 
 void wifi_connect(){
   //Configuración del gestor de WiFi con WifiManager
@@ -91,4 +88,3 @@ void wifi_connect(){
   Serial.println("");
   Serial.println("WiFi connected...yeey :3");
 }
-
