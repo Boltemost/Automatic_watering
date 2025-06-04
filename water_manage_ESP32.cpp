@@ -5,15 +5,20 @@
  * trigger pin will start a configPortal AP for 120 seconds then turn it off.
  * 
  */
-#include <bits/stdc++.h>
+#include <chrono>
+#include <iostream>
+#include <thread>
+
 #include <WiFiManager.h> // https://github.com/tzapu/WiFiManager
 #include <WiFi.h>
+
+using namespace std;
 
 
 //Declaración de variables
 const int trigPin = 16;
 const int echoPin = 17;
-const int TRIGGER_PIN = 120;
+const int TRIGGER_PIN = 10;
 
 float duration, longitude; 
 
@@ -31,7 +36,7 @@ void setup() {
 
 
   //Asignación de pines
-  pinMode(trigPin, OUTPUT);  
+  pinMode(trigPin, OUTPUT);
 	pinMode(echoPin, INPUT);  
   
   pinMode(TRIGGER_PIN, INPUT_PULLUP);
@@ -42,8 +47,12 @@ void setup() {
 void loop() { // put your main code here, to run repeatedly:
   // Wifi configuration, triggered by pin 10
   if ( digitalRead(TRIGGER_PIN) == LOW ) {
+    Serial.println ("WIFI!!!");
+
     std::thread t(wifi_connect);
-    
+    t.detach();
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+
   }
 
 
@@ -60,10 +69,15 @@ void loop() { // put your main code here, to run repeatedly:
   Serial.println(longitude);
   delay(100);
 
+
 }
 
 
+
 void wifi_connect(){
+
+  
+
   //Configuración del gestor de WiFi con WifiManager
   WiFiManager wm;
 
