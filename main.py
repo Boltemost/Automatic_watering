@@ -45,7 +45,11 @@ dht11data = [
     {
         "id" : 2,
         "humid" : 0.0
-    }
+    },
+    {
+        "id" : 3,
+        "lux" : 0
+    },
 ]
 
 #Diccionario database autosave
@@ -154,7 +158,8 @@ async def temp_humid_get(id : int):
 async def temp_humid_put(
     id: int,
     temp: int | None = Body(default=None),
-    humid: float | None = Body(default=None)
+    humid: float | None = Body(default=None),
+    lux: int | None = Body(default=None)
 ):
 
     if id == 1:
@@ -168,6 +173,12 @@ async def temp_humid_put(
             return Response(status_code=204)
         dht11data[1]["humid"] = float(humid)
         return dht11data[1]
+
+    if id == 3:
+        if lux == None:
+            return Response(status_code=204)
+        dht11data[2]["lux"] = int(lux)
+        return dht11data[2]
 
     if not checkIdExists(dht11data, id):
         raise HTTPException(status_code=404, detail="Item not found")
