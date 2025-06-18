@@ -89,7 +89,7 @@ void loop() { // put your main code here, to run repeatedly:
 
   //Hace request al servidor y obtiene path_name_body solo una vez
   if (!(objectReady) && (WiFi.status() == WL_CONNECTED)){
-    request_server_get(path_name_body, waterdata);
+    request_server_get(path_name_body, &waterdata);
     objectReady = true;
   } 
 
@@ -109,9 +109,9 @@ void loop() { // put your main code here, to run repeatedly:
   //Requests at server GET
   // Serial.println(elapsedTime);
   if (((startTime - elapsedTime) >= 2000) && (objectReady)){
-    request_server_get(path_name_irrigation, irrigationdata);
+    request_server_get(path_name_irrigation, &irrigationdata);
     
-    request_server_post(path_name_body, waterdata);
+    request_server_post(path_name_body, &waterdata);
     elapsedTime = startTime;
   }
 }
@@ -165,7 +165,7 @@ void ultrasonic_tank_sensor(){
 }
 
 
-void request_server_get(String path_name, JsonDocument doc){
+void request_server_get(String path_name, JsonDocument* doc){
   http.begin(host_name + path_name); //Inicia comunicación HTTP
 
   int httpCode = http.GET();
@@ -183,7 +183,7 @@ void request_server_get(String path_name, JsonDocument doc){
     if (httpCode == HTTP_CODE_OK) {
       String payload = http.getString();
       Serial.println(payload);
-      error = deserializeJson(doc, payload);
+      error = deserializeJson(*doc, payload);
     } else {
       // HTTP header has been send and Server response header has been handled
       Serial.printf("[HTTP] GET... code: %d\n", httpCode);
@@ -205,7 +205,7 @@ void request_server_get(String path_name, JsonDocument doc){
 }
 
 
-void request_server_post(String path_name, JsonDocument doc){
+void request_server_post(String path_name, JsonDocument* doc){
   http.begin(host_name + path_name); //Inicia comunicación HTTP
 
   if (!(http.connected())) {
@@ -216,7 +216,7 @@ void request_server_post(String path_name, JsonDocument doc){
   String output;
 
 
-  serializeJsonPretty(doc, output);
+  serializeJsonPretty(*doc, output);
 
   Serial.println(output);
 
