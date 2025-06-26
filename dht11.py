@@ -24,12 +24,12 @@ def make_request(path, method, json=None):
 
 def temp_humid_put():
     rsp1 = make_request('climatic_variables/1', "PUT", json=tempObj)
-    print("Status Code: ", rsp1.status_code)
-    print("Response Body:", rsp1.content.decode())
+    # print("Status Code: ", rsp1.status_code)
+    # print("Response Body:", rsp1.content.decode())
 
     rsp2 = make_request('climatic_variables/2', "PUT", json=humidObj)
-    print("Status Code: ", rsp2.status_code)
-    print("Response Body:", rsp2.content.decode())
+    # print("Status Code: ", rsp2.status_code)
+    # print("Response Body:", rsp2.content.decode())
     return
 
 
@@ -85,4 +85,3 @@ thread3=threading.Thread(target=stopButton)
 thread1.start()
 thread2.start()
 thread3.start()
-
