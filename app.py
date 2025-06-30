@@ -4,6 +4,7 @@ import time
 from time import gmtime, strftime
 import requests as rqt
 import json
+import sys
 
 #Declación de variables
 
@@ -35,6 +36,9 @@ tries = 0
 last_sent_time = {}
 
 tryConnectSensor = -1
+
+global count
+count = 0 #Flancos positivos del sensor de flujo de agua
 
 
 
@@ -92,6 +96,12 @@ def connectNode (node, tries):
             print("Error (Código 2): No se estableció conexión con el nodo ", node-2)
 
 
+def countPulse(channel): #Callback para el sensor de flujo de agua
+    global count
+    count = count+1
+    # print (count)
+
+
 
 #Función comprobación última hora de lectura de humedad (apaga cualquier sensor del cual no reciba datos)
 def timeChecksoilM (node):                                                   #Comprueba error 3
@@ -105,9 +115,9 @@ def timeChecksoilM (node):                                                   #Co
 
 
 
-#Función comprobación ultima hora de escritura de válvula (cierra cualquier valvula abierta por mas de 10 minutos)
+#Función comprobación ultima hora de escritura de válvula (cierra cualquier valvula abierta por mas de 20 minutos)
 def timeCheckValve(node):                                                   #Comprueba error 4
-    maxTime = valve[node]["opening_time"] + 600 # 10 minutos de tiempo limite para cualquier valvula
+    maxTime = valve[node]["opening_time"] + 1200 # 20 minutos de tiempo limite para cualquier valvula
     if maxTime < time.time():
         valve[node]["state"] = False
         valves_put (node)
@@ -246,9 +256,12 @@ def control_put(id, dato): #Entrega datos de control cuando solicita un put requ
 
 gpio.setmode(gpio.BOARD)
 gpio.setup(12, gpio.IN, pull_up_down=gpio.PUD_UP) #(Bool) Botón emergencia
+gpio.setup(36, gpio.IN, pull_up_down=gpio.PUD_UP) #Sensor de flujo de agua
+gpio.add_event_detect(36, gpio.RISING, callback=countPulse) #Callback para el sensor de flujo de agua
 
 for i in [11, 13, 15, 19, 21, 23, 29, 31]:
     gpio.setup(i, gpio.OUT) # Valvulas
+
 
 
 #Iniciar comunicación bluetooth
